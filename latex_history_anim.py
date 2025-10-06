@@ -261,8 +261,6 @@ def main():
 
                 if not pages:
                     logging.warning("No pages produced for commit %s", short)
-                    logging.warning("check output file %s", pdf_path)
-                    input("press any key to continue")
                     continue
 
                 # compose side-by-side
