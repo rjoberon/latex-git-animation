@@ -3,7 +3,7 @@
 latex_history_anim.py
 
 Usage:
-    python latex_history_anim.py /path/to/repo --tex main.tex --out history_anim.gif
+    python latex_history_anim.py /path/to/repo --tex main.tex --out history.gif
 
 What it does:
     - Finds all git commits that touched the specified .tex file
@@ -19,7 +19,6 @@ Note: The script leaves the repository checked out to the original branch at the
 """
 
 import argparse
-import os
 import subprocess
 import sys
 import tempfile
@@ -28,6 +27,7 @@ from pathlib import Path
 from PIL import Image
 import imageio
 import logging
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -47,12 +47,12 @@ def ensure_tools_exist():
         raise RuntimeError(f"Missing required tools in PATH: {', '.join(missing)}. Install them and retry.")
 
 
-def get_commits_touching_file(repo_path, tex_file):
+def get_commits_touching_file(repo_path, files):
     # returns commit hashes (oldest -> newest)
-    cmd = ["git", "-C", str(repo_path), "log", "--pretty=format:%H", "--reverse", "--", str(tex_file)]
+    cmd = ["git", "-C", str(repo_path), "log", "--pretty=format:%H", "--reverse", "--"] + files
     proc = run(cmd, capture_output=True)
     hashes = [h.strip() for h in proc.stdout.splitlines() if h.strip()]
-    logging.info("Found %d commits touching %s", len(hashes), tex_file)
+    logging.info("Found %d commits touching %s", len(hashes), files)
     return hashes
 
 
@@ -63,8 +63,6 @@ def build_latex(repo_path, tex_path, workdir, build_outdir):
     The PDF should appear in build_outdir (if pdflatex used, use -output-directory).
     Returns path to the resulting PDF or raises RuntimeError on failure.
     """
-    tex_path = Path(tex_path)
-    tex_name = tex_path.name
     pdf_name = tex_path.with_suffix(".pdf").name
     build_outdir = Path(build_outdir)
 
@@ -123,10 +121,17 @@ def pdf_to_png_pages(pdf_path, out_prefix, dpi=150, max_pages=10):
     # pdftoppm -png -r DPI input.pdf outprefix
     cmd = [pdftoppm, "-png", "-r", str(dpi), str(pdf_path), str(out_prefix)]
     run(cmd)
+    # get number of digits for first page
+    digits = 0
+    for i in range(1, 3):
+        if Path(str(out_prefix) + "-" + ("0" * i) + "1.png").exists():
+            digits = i
+            break
+
     # produced files like outprefix-1.png outprefix-2.png ...
     produced = []
     for i in range(1, max_pages + 1):
-        p = Path(f"{out_prefix}-{i}.png")
+        p = Path(str(out_prefix) + "-" + ("0" * digits) + str(i) + ".png")
         if p.exists():
             produced.append(p)
         else:
@@ -178,7 +183,7 @@ def compose_side_by_side(images, max_pages=10, max_height=1200, gap=10):
 def main():
     parser = argparse.ArgumentParser(description="Create animation of LaTeX document across git history commits.")
     parser.add_argument("repo", help="Path to the git repository")
-    parser.add_argument("--tex", default="main.tex", help="Main .tex file path relative to repo root (default: main.tex)")
+    parser.add_argument("--tex", type=str, nargs="+", default=["main.tex"], help="Main .tex file path relative to repo root (default: main.tex)")
     parser.add_argument("--out", default="history_anim.gif", help="Output animation filename (gif recommended)")
     parser.add_argument("--out-dir", default="latex_history_out", help="Directory to store intermediate PNGs and PDFs")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages to show side-by-side (default 10)")
@@ -198,13 +203,13 @@ def main():
 
     ensure_tools_exist()
 
-    tex_rel = Path(args.tex)
+    files = args.tex
+    tex_rel = Path(files[0])
     tex_abs = repo_path / tex_rel
     if not tex_abs.exists():
         logging.error("Specified tex file not found in repo: %s", tex_abs)
         sys.exit(2)
 
-    orig_cwd = Path.cwd()
     # remember current branch/commit to restore later
     logging.info("Recording current git HEAD to restore later.")
     try:
@@ -216,9 +221,9 @@ def main():
         original_branch = res.stdout.strip()
     logging.info("Original HEAD: %s", original_branch)
 
-    commits = get_commits_touching_file(repo_path, tex_rel)
+    commits = get_commits_touching_file(repo_path, files)
     if not commits:
-        logging.error("No commits found touching the file %s", tex_rel)
+        logging.error("No commits found touching the file(s) %s", files)
         sys.exit(2)
 
     outdir = Path(args.out_dir).resolve()
@@ -256,6 +261,8 @@ def main():
 
                 if not pages:
                     logging.warning("No pages produced for commit %s", short)
+                    logging.warning("check output file %s", pdf_path)
+                    input("press any key to continue")
                     continue
 
                 # compose side-by-side
@@ -293,6 +300,15 @@ def main():
     for p in composed_pngs:
         img = imageio.imread(str(p))
         frames.append(img)
+
+    # unify width of all frames
+    maxwidth = max([f.shape[1] for f in frames])
+    for _ in range(len(frames)):
+        f = frames.pop(0)
+        if f.shape[1] < maxwidth:
+            sh = np.zeros((f.shape[0], maxwidth - f.shape[1], f.shape[2]), np.uint8)
+            f = np.concatenate((f, sh), axis=1)
+        frames.append(f)
 
     # save gif
     output_anim = Path(args.out)
