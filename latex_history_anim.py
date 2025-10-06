@@ -47,7 +47,7 @@ def ensure_tools_exist():
         raise RuntimeError(f"Missing required tools in PATH: {', '.join(missing)}. Install them and retry.")
 
 
-def get_commits_touching_file(repo_path, files):
+def get_commits_touching_files(repo_path, files):
     # returns commit hashes (oldest -> newest)
     cmd = ["git", "-C", str(repo_path), "log", "--pretty=format:%H", "--reverse", "--"] + files
     proc = run(cmd, capture_output=True)
@@ -119,7 +119,7 @@ def pdf_to_png_pages(pdf_path, out_prefix, dpi=150, max_pages=10):
         raise RuntimeError("pdftoppm not found (required). Install Poppler utilities.")
 
     # pdftoppm -png -r DPI input.pdf outprefix
-    cmd = [pdftoppm, "-png", "-r", str(dpi), str(pdf_path), str(out_prefix)]
+    cmd = [pdftoppm, "-png", "-forcenum", "-r", str(dpi), str(pdf_path), str(out_prefix)]
     run(cmd)
     # get number of digits for first page
     digits = 0
@@ -221,7 +221,7 @@ def main():
         original_branch = res.stdout.strip()
     logging.info("Original HEAD: %s", original_branch)
 
-    commits = get_commits_touching_file(repo_path, files)
+    commits = get_commits_touching_files(repo_path, files)
     if not commits:
         logging.error("No commits found touching the file(s) %s", files)
         sys.exit(2)
