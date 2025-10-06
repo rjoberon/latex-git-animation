@@ -131,7 +131,7 @@ def pdf_to_png_pages(pdf_path, out_prefix, dpi=150, max_pages=10):
     # produced files like outprefix-1.png outprefix-2.png ...
     produced = []
     for i in range(1, max_pages + 1):
-        p = Path(str(out_prefix) + "-" + ("0" * digits) + str(i) + ".png")
+        p = Path(str(out_prefix) + "-" + str(i).zfill(digits) + ".png")
         if p.exists():
             produced.append(p)
         else:
