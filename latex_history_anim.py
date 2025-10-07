@@ -9,7 +9,7 @@ What it does:
     - Finds all git commits that touched the specified .tex file
     - For each commit (oldest -> newest):
         - checks out the commit (detached HEAD)
-        - builds the specified .tex into a PDF (tries latexmk, falls back to pdflatex)
+        - builds the specified .tex into a PDF (tries latexmk, falls back to (pdf/xe/lua)latex)
         - uses pdftoppm to render up to `--max-pages` PNG pages
         - composes the PNG pages side-by-side into a single image (up to max-pages)
         - writes a composed PNG per commit
@@ -56,11 +56,11 @@ def get_commits_touching_files(repo_path, files):
     return hashes
 
 
-def build_latex(repo_path, tex_path, workdir, build_outdir):
+def build_latex(repo_path, tex_path, workdir, build_outdir, engine):
     """
-    Try latexmk first. If it fails or missing, fall back to pdflatex (2 runs).
+    Try latexmk first. If it fails or missing, fall back to call TeX engine (2 runs).
     tex_path must be a Path relative to repo_path (or absolute).
-    The PDF should appear in build_outdir (if pdflatex used, use -output-directory).
+    The PDF should appear in build_outdir (if TeX engine is used, use -output-directory).
     Returns path to the resulting PDF or raises RuntimeError on failure.
     """
     pdf_name = tex_path.with_suffix(".pdf").name
@@ -69,7 +69,7 @@ def build_latex(repo_path, tex_path, workdir, build_outdir):
     # Try latexmk
     latexmk_exe = shutil.which("latexmk")
     if latexmk_exe:
-        cmd = [latexmk_exe, "-pdf", "-interaction=nonstopmode", "-halt-on-error", "-silent",
+        cmd = [latexmk_exe, f"-{engine}", "-interaction=nonstopmode", "-halt-on-error", "-silent",
                "-jobname=" + tex_path.stem, str(tex_path)]
         # latexmk may not support -outdir consistently across all distributions; use WORKDIR technique:
         # run latexmk from the directory where tex is located, but set environment OUTDIR by tex engine options is tricky.
@@ -85,23 +85,23 @@ def build_latex(repo_path, tex_path, workdir, build_outdir):
         except subprocess.CalledProcessError as e:
             logging.warning("latexmk failed: %s", getattr(e, "stderr", str(e)))
 
-    # Fallback to pdflatex (2 passes)
-    pdflatex_exe = shutil.which("pdflatex")
-    if pdflatex_exe is None:
-        raise RuntimeError("Neither latexmk nor pdflatex is available to build the document.")
+    # Fallback to directly call TeX engine (2 passes)
+    latex_exe = shutil.which(engine)
+    if latex_exe is None:
+        raise RuntimeError(f"Neither latexmk nor {engine} is available to build the document.")
 
-    logging.info("Building with pdflatex (fallback)")
-    # Ensure output directory exists and run pdflatex there with -output-directory
+    logging.info(f"Building with {engine} (fallback)")
+    # Ensure output directory exists and run latex there with -output-directory
     build_outdir.mkdir(parents=True, exist_ok=True)
-    # run pdflatex twice
+    # run latex twice
     for i in range(2):
-        cmd = [pdflatex_exe, "-interaction=nonstopmode", "-halt-on-error",
+        cmd = [latex_exe, "-interaction=nonstopmode", "-halt-on-error",
                "-output-directory", str(build_outdir), str(tex_path)]
         try:
             run(cmd, cwd=workdir)
         except subprocess.CalledProcessError as e:
             # capture output if available
-            raise RuntimeError(f"pdflatex failed on pass {i+1}:\n{getattr(e, 'stderr', '') or e}")
+            raise RuntimeError(f"{engine} failed on pass {i+1}:\n{getattr(e, 'stderr', '') or e}")
 
     produced_pdf = build_outdir / pdf_name
     if not produced_pdf.exists():
@@ -190,6 +190,7 @@ def main():
     parser.add_argument("--dpi", type=int, default=150, help="DPI for pdftoppm rendering (default 150)")
     parser.add_argument("--frame-duration", type=float, default=1.0, help="Frame duration (seconds) for GIF (default 1.0)")
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary build directories")
+    parser.add_argument("--engine", type=str, choices=["pdflatex", "xelatex", "lualatex"], default="pdflatex", help="TeX engine to use (default: pdflatex)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -245,7 +246,7 @@ def main():
                 build_outdir = Path(workdir) / "out"
                 build_outdir.mkdir(parents=True, exist_ok=True)
                 try:
-                    pdf_path = build_latex(repo_path, tex_rel, repo_path, build_outdir)
+                    pdf_path = build_latex(repo_path, tex_rel, repo_path, build_outdir, args.engine)
                 except Exception as e:
                     logging.warning("Build failed for commit %s : %s", short, e)
                     # skip this commit but continue
