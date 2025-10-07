@@ -273,7 +273,8 @@ def main():
                 out_png = outdir / f"composed_{idx:04d}_{short}.png"
                 composed_img.save(out_png, format="PNG")
                 logging.info("Wrote %s", out_png)
-                composed_pngs.append(out_png)
+                if Path(out_png).is_file():
+                    composed_pngs.append(out_png)
 
             # optionally, small safety sleep? Not necessary.
 
@@ -294,24 +295,25 @@ def main():
 
     # Build GIF animation
     logging.info("Building animation %s", args.out)
-    frames = []
-    for p in composed_pngs:
-        img = imageio.imread(str(p))
-        frames.append(img)
+    frames = [imageio.imread(str(p)) for p in composed_pngs]
 
-    # unify width of all frames
-    maxwidth = max([f.shape[1] for f in frames])
+    # unify height and width of all frames
+    max_h = max([f.shape[0] for f in frames])
+    max_w = max([f.shape[1] for f in frames])
     for _ in range(len(frames)):
         f = frames.pop(0)
-        if f.shape[1] < maxwidth:
-            sh = np.zeros((f.shape[0], maxwidth - f.shape[1], f.shape[2]), np.uint8)
+        if f.shape[0] < max_h:  # height
+            sh = np.zeros((max_h - f.shape[0], f.shape[1], f.shape[2]), np.uint8)
+            f = np.concatenate((f, sh), axis=0)
+        if f.shape[1] < max_w:  # width
+            sh = np.zeros((f.shape[0], max_w - f.shape[1], f.shape[2]), np.uint8)
             f = np.concatenate((f, sh), axis=1)
         frames.append(f)
 
     # save gif
     output_anim = Path(args.out)
     try:
-        imageio.mimsave(str(output_anim), frames, duration=args.frame_duration)
+        imageio.mimsave(str(output_anim), frames, duration=args.frame_duration, loop=0)
         logging.info("Animation saved to %s", output_anim)
     except Exception as e:
         logging.error("Failed to write animation: %s", e)
